@@ -333,16 +333,16 @@ def main():
     """统一调用上面的演示函数，方便一次性运行查看效果"""
     # 你可以根据需要注释 / 取消注释某些函数调用
     basic_get()
-    # get_with_params()
-    # get_with_headers()
-    # response_common_attrs()
-    # get_timeout_and_error()
-    # get_with_cookies()
-    # use_session()
-    # post_form_data()
-    # post_json_data()
-    # file_upload_example()
-    # other_http_methods()
+    get_with_params()
+    get_with_headers()
+    response_common_attrs()
+    get_timeout_and_error()
+    get_with_cookies()
+    use_session()
+    post_form_data()
+    post_json_data()
+    file_upload_example()
+    other_http_methods()
 
 
 if __name__ == "__main__":

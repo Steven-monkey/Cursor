@@ -22,17 +22,17 @@ class Persion:
         # self.__hide：私有属性，双下划线开头，触发 Python 名称改写
         # 实际存为 _Persion__hide，外部访问需知道改写后的名字
         self.__hide = 3
-
+        self.change_hide()
     # def change_hide：普通方法，用来修改 __hide 的值
     def change_hide(self):
         # 类内部可直接写 self.__hide，Python 会自动解析为 _Persion__hide
-        self.__hide = 4
+        self.__hide = 6666666
 
 
 # per = Persion()：调用类创建对象，自动执行 __init__
 per = Persion()
 # per.change_hide()：调用方法，把 __hide 从 3 改为 4
-per.change_hide()
+# per.change_hide()
 # print(per.public)：访问公开属性并打印
 print(per.public)
 # print(per._semi)：访问半私有属性并打印

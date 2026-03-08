@@ -1,149 +1,108 @@
 """
 core.py - 核心排班逻辑
-
-这个文件做什么？
-  只负责"算排班"和"导出Excel"，不负责弹窗口、不负责打印提示。
-  cli 和 gui 都会调用这里的函数。
-
-谁用这个文件？
-  cli.py 和 gui.py 会写 from .core import xxx 来用这里的函数。
-
-流程简要：
-  1. 找出要排班的日子（周末、节假日，排除调休）
-  2. 把连续的日子分成一段段（比如 5.1-5.5 劳动节是一段）
-  3. 给每段分配值班组
-  4. 导出 Excel
+负责算排班和导出 Excel，不负责界面。
 """
-
-# ==================== 导入库 ====================
-# import = 把别人写好的代码拿进来用
-import datetime  # 算日期的
-from datetime import timedelta  # 表示"几天"这种时间长度
-import pandas as pd  # 生成日期、写 Excel 用
-import chinese_calendar  # 判断某天是不是节假日、调休日
+import datetime  # 日期处理
+from datetime import timedelta  # 表示时间间隔，如"1天"
+import pandas as pd  # 表格、Excel，pd 是别名
+import chinese_calendar  # 判断中国节假日、调休日
 
 
 def get_all_schedule_dates(year, start_month, end_month):
-    """
-    找出需要排班的所有日期（周末 + 节假日，排除调休日）
-
-    传入：年份、起始月、结束月
-    返回：一个列表，每个元素是 (日期, "周末"或"法定节假日"等)
-    """
-    # 从哪一天开始：比如 2024年1月1日
+    """找出需要排班的所有日期（周末+节假日，排除调休）"""
+    # 起始日期：该年该月 1 号
     start_date = datetime.date(year, start_month, 1)
 
-    # 到哪一天结束：比如 2024年12月31日
     if end_month == 12:
+        # 12 月：结束日期 = 次年 1 月 1 日 - 1 天 = 12 月 31 日
         end_date = datetime.date(year + 1, 1, 1) - timedelta(days=1)
     else:
+        # 非 12 月：结束日期 = 下月 1 日 - 1 天
         end_date = datetime.date(year, end_month + 1, 1) - timedelta(days=1)
 
-    schedule_dates = []  # 空列表，后面把要排班的日期一个个加进去
+    schedule_dates = []  # 空列表，存 (日期, 类型) 元组
 
-    # 从 start_date 到 end_date，一天一天遍历
     for dt in pd.date_range(start=start_date, end=end_date, freq='D'):
-        d = dt.date()  # 转成普通的日期格式
+        # pd.date_range 按天生成日期；freq='D' 表示每天；dt 是 pandas 的日期
+        d = dt.date()  # 转成 Python 的 date 对象
 
-        # 是不是周末？Python 里 5=周六 6=周日
         is_weekend = d.weekday() in [5, 6]
+        # weekday() 返回 0-6，5=周六 6=周日；in 判断是否在列表里
 
-        # 是不是法定节假日（春节、国庆等）？
-        is_holiday = chinese_calendar.is_holiday(d)
+        is_holiday = chinese_calendar.is_holiday(d)  # 是否法定节假日
 
-        # 是不是要上班的日子？（调休日也算上班）
-        is_workday = chinese_calendar.is_workday(d)
+        is_workday = chinese_calendar.is_workday(d)  # 是否工作日（含调休）
 
-        # 调休日 = 本来是周末 + 但被改成要上班（如国庆前补班的周六）
-        # 调休日不排值班！
         is_makeup_workday = is_weekend and is_workday
+        # 调休日 = 周末但被改成要上班；调休日不排值班
 
         if is_makeup_workday:
-            continue  # 跳过，不加入
+            continue  # 跳过调休日，不加入结果
 
-        # 只排：周末 或 法定节假日
         if is_weekend or is_holiday:
+            # 只排周末或法定节假日
             if is_holiday and not is_weekend:
-                date_type = "法定节假日"
+                date_type = "法定节假日"  # 如清明、端午在工作日时
             elif is_weekend and not is_holiday:
                 date_type = "周末"
             else:
                 date_type = "周末+节假日"  # 如国庆里的周六
-            schedule_dates.append((d, date_type))  # append = 加到列表末尾
+            schedule_dates.append((d, date_type))  # append 加到列表末尾；(d, date_type) 是元组
 
-    return schedule_dates
+    return schedule_dates  # 返回日期列表
 
 
 def get_holiday_periods(schedule_dates):
-    """
-    把日期按"连续"分成一段段。
-    比如 1.6、1.7 连续 → 一段；5.1-5.5 劳动节 → 一段。
-    劳动节、国庆节会强制拆成两段（前期/后期）。
-
-    传入：日期列表
-    返回：列表的列表，每小段是一串连续的日期
-    """
+    """把日期按"连续"分成一段段；劳动节、国庆节强制拆两段"""
     if not schedule_dates:
-        return []  # 空的话直接返回空列表
+        return []  # 空列表时直接返回
 
-    holiday_periods = []  # 存所有段
-    current_period = []   # 当前这一段
+    holiday_periods = []  # 存所有段，每段是一个列表
+    current_period = []   # 当前正在处理的一段
 
-    for i, (date, date_type) in enumerate(schedule_dates):  # enumerate = 同时拿到序号 i 和内容
-        # 劳动节 5.3、国庆 10.4 要强制断开，不让同一组值太多天
-        should_split = False
+    for i, (date, date_type) in enumerate(schedule_dates):
+        # enumerate 同时得到下标 i 和元素；元素是 (date, date_type) 元组
+        should_split = False  # 是否要强制断开
         if date.month == 5 and date.day == 3:
-            should_split = True   # 5.1-5.2 一段，5.3-5.5 一段
+            should_split = True   # 劳动节 5.3 断开：5.1-5.2 一段，5.3-5.5 一段
         elif date.month == 10 and date.day == 4:
-            should_split = True   # 10.1-10.3 一段，10.4-10.7 一段
+            should_split = True   # 国庆 10.4 断开：10.1-10.3 一段，10.4-10.7 一段
 
         if should_split and current_period:
-            holiday_periods.append(current_period)  # 先存好当前这段
-            current_period = [(date, date_type)]   # 开新段
+            holiday_periods.append(current_period)  # 先存当前段
+            current_period = [(date, date_type)]   # 开新段，当前日期作为第一天
         elif i == 0:
-            current_period.append((date, date_type))  # 第一个直接加
+            current_period.append((date, date_type))  # 第一个日期直接加
         else:
-            prev_date = schedule_dates[i - 1][0]  # 上一个日期
-            days_diff = (date - prev_date).days   # 隔了几天
-
-            if days_diff == 1:  # 连续（隔1天）
-                current_period.append((date, date_type))
+            prev_date = schedule_dates[i - 1][0]  # 上一个日期的 date；[0] 取元组第一个元素
+            days_diff = (date - prev_date).days   # 两日期相减得 timedelta，.days 取天数
+            if days_diff == 1:
+                current_period.append((date, date_type))  # 连续则加入当前段
             else:
-                # 不连续了，存好当前段，开新段
                 if current_period:
-                    holiday_periods.append(current_period)
-                current_period = [(date, date_type)]
+                    holiday_periods.append(current_period)  # 不连续则存当前段
+                current_period = [(date, date_type)]  # 开新段
 
-    # 别忘了最后一段
     if current_period:
-        holiday_periods.append(current_period)
+        holiday_periods.append(current_period)  # 最后一段别忘了
 
     return holiday_periods
 
 
 def get_period_identifier(period):
-    """
-    给这一段假期打个"标签"。
-    劳动节、国庆节有"前期""后期"；清明端午等用"连休_年月日"。
-    普通周末返回 None，表示可以轮流排，不用固定一组。
+    """给这段假期打标签：劳动节前期/国庆节后期/连休_日期/None"""
+    first_date = period[0][0]  # period[0] 第一个元组，[0] 取日期
 
-    传入：一段日期
-    返回："劳动节前期" 或 None 等
-    """
-    first_date = period[0][0]  # 这段的第一天
-
-    # 这段里有没有法定节假日？
     has_holiday = any(chinese_calendar.is_holiday(date) for date, _ in period)
+    # any：任一为 True 则 True；for date, _ in period 遍历，_ 忽略第二项
 
-    period_dates = [date for date, _ in period]  # 把这段的日期都拿出来
+    period_dates = [date for date, _ in period]  # 列表推导：取出所有日期
 
-    # 劳动节、国庆节各分前后两段
     labor_day_early = [datetime.date(first_date.year, 5, 1), datetime.date(first_date.year, 5, 2)]
     labor_day_late = [datetime.date(first_date.year, 5, 3), datetime.date(first_date.year, 5, 4), datetime.date(first_date.year, 5, 5)]
     national_day_early = [datetime.date(first_date.year, 10, 1), datetime.date(first_date.year, 10, 2), datetime.date(first_date.year, 10, 3)]
     national_day_late = [datetime.date(first_date.year, 10, 4), datetime.date(first_date.year, 10, 5), datetime.date(first_date.year, 10, 6), datetime.date(first_date.year, 10, 7)]
 
-    # 看这段属于哪个，返回对应标签
     if any(date in labor_day_early for date in period_dates):
         return "劳动节前期"
     elif any(date in labor_day_late for date in period_dates):
@@ -153,46 +112,39 @@ def get_period_identifier(period):
     elif any(date in national_day_late for date in period_dates):
         return "国庆节后期"
     elif has_holiday and len(period) > 1:
-        return f"连休_{first_date.strftime('%Y%m%d')}"  # 如 连休_20240404
+        return f"连休_{first_date.strftime('%Y%m%d')}"  # strftime 格式化日期
     else:
-        return None  # 普通周末
+        return None  # 普通周末，不需要固定组
 
 
 def create_schedule(groups, schedule_dates, start_group_index=0):
-    """
-    生成排班表（核心函数）
+    """生成排班表：分时段、分配组、拼结果"""
+    schedule = []  # 最终排班结果
 
-    流程：1. 分时段 2. 特殊段固定一组 3. 普通段轮流 4. 拼成排班记录
+    group_month_count = {}   # 键 (组索引, 年, 月)，值：该组该月已排天数
+    last_schedule_date = {}  # 键 组索引，值：该组上次值班日期
+    current_group_index = start_group_index  # 当前轮到第几组（从 0 开始）
+    period_assigned = {}     # 键 时段标签，值：已分配的组索引
 
-    传入：groups=各组人员, schedule_dates=要排的日期, start_group_index=从第几组开始轮
-    返回：排班表，每行是 日期、星期、类型、值班组、值班人员
-    """
-    schedule = []  # 排班结果，最后返回这个
-
-    group_month_count = {}   # 每组每月排了几天（不能超过4天）
-    last_schedule_date = {}  # 每组上次值班是哪天（避免连续值）
-    current_group_index = start_group_index  # 当前轮到第几组
-    period_assigned = {}     # 某段假期已经分给哪组了
-
-    # 先把日期按"连续"分成一段段
-    holiday_periods = get_holiday_periods(schedule_dates)
+    holiday_periods = get_holiday_periods(schedule_dates)  # 先分时段
 
     for period in holiday_periods:
-        period_id = get_period_identifier(period)  # 这段的标签，可能是 None（普通周末）
+        period_id = get_period_identifier(period)  # 这段的标签
 
-        # 特殊段（劳动节、国庆等）要整段分给同一组
         if period_id and period_id not in period_assigned:
+            # 特殊段且未分配：选一组承担整段
             assigned_group = find_available_group_for_period(
                 groups, current_group_index, period,
                 group_month_count, last_schedule_date
             )
-            period_assigned[period_id] = assigned_group
-            current_group_index = (assigned_group + 1) % len(groups)  # % 取余，让组号循环
+            period_assigned[period_id] = assigned_group  # 记下来
+            current_group_index = (assigned_group + 1) % len(groups)
+            # % 取余：3 组时 (2+1)%3=0，实现循环
 
-        # 遍历这段里的每一天，确定谁值班
         for date, date_type in period:
+            # 遍历这段里每一天
             if period_id and period_id in period_assigned:
-                assigned_group = period_assigned[period_id]
+                assigned_group = period_assigned[period_id]  # 特殊段用固定组
             else:
                 assigned_group = find_available_group(
                     groups, current_group_index, date,
@@ -200,20 +152,20 @@ def create_schedule(groups, schedule_dates, start_group_index=0):
                 )
                 current_group_index = (assigned_group + 1) % len(groups)
 
-            # 记一下：这组这月多值了一天，这组上次值班是这天
-            month_key = (assigned_group, date.year, date.month)
-            group_month_count[month_key] = group_month_count.get(month_key, 0) + 1  # get(键, 默认值)
-            last_schedule_date[assigned_group] = date
+            month_key = (assigned_group, date.year, date.month)  # 月度键
+            group_month_count[month_key] = group_month_count.get(month_key, 0) + 1
+            # get(键, 0)：没有则返回 0，再 +1
+            last_schedule_date[assigned_group] = date  # 更新该组上次值班日
 
             weekday_names = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
             weekday = weekday_names[date.weekday()]  # weekday() 返回 0-6
-            members_str = '、'.join(groups[assigned_group])  # 把名单用顿号连起来
+            members_str = '、'.join(groups[assigned_group])  # 用顿号连接名单
 
-            schedule.append({  # 字典：键值对，像 {"日期": xxx, "值班组": "第1组"}
+            schedule.append({
                 '日期': date,
                 '星期': weekday,
                 '类型': date_type,
-                '值班组': f"第{assigned_group + 1}组",  # 组号从1开始显示
+                '值班组': f"第{assigned_group + 1}组",  # 显示用 1 开始
                 '值班人员': members_str
             })
 
@@ -221,47 +173,43 @@ def create_schedule(groups, schedule_dates, start_group_index=0):
 
 
 def find_available_group_for_period(groups, start_index, period, group_month_count, last_schedule_date):
-    """
-    给整段假期找一组来值。要求：这组值完这段后，每月不超过4天，且离上次值班至少隔2天。
-    """
-    group_count = len(groups)
-    first_date = period[0][0]
+    """给整段找一组：每月不超 4 天，离上次值班至少 2 天"""
+    group_count = len(groups)  # 组数
+    first_date = period[0][0]  # 这段第一天
 
     for i in range(group_count):
-        group_index = (start_index + i) % group_count  # 轮流试每一组
-        can_assign = True
-        month_days = {}  # 这段假期在每个月占几天（可能跨月）
+        group_index = (start_index + i) % group_count  # 轮流试各组
+        can_assign = True  # 假设可分配
+        month_days = {}    # 这段在各月占几天（可能跨月）
 
         for date, _ in period:
             month_key = (date.year, date.month)
             month_days[month_key] = month_days.get(month_key, 0) + 1
 
         for month_key, days_needed in month_days.items():
+            # items() 返回 (键, 值) 对
             year, month = month_key
             current_count = group_month_count.get((group_index, year, month), 0)
             if current_count + days_needed > 4:
                 can_assign = False
-                break
+                break  # 超了 4 天，换下一组
 
         if not can_assign:
             continue
 
-        # 这组上次值班离这段第一天够不够2天？
         if group_index in last_schedule_date:
             last_date = last_schedule_date[group_index]
             days_diff = (first_date - last_date).days
-            if days_diff < 2:  # 间隔至少 2 天
-                continue
+            if days_diff < 2:
+                continue  # 间隔不足 2 天
 
-        return group_index
+        return group_index  # 找到可用组
 
-    return start_index  # 实在找不到就用 start_index
+    return start_index  # 找不到就兜底返回
 
 
 def find_available_group(groups, start_index, date, group_month_count, last_schedule_date):
-    """
-    给单天找一组值（普通周末用）。要求：这组这月没满4天，且离上次值班至少2天。
-    """
+    """给单天找一组：本月未满 4 天，离上次至少 2 天"""
     group_count = len(groups)
 
     for i in range(group_count):
@@ -270,7 +218,7 @@ def find_available_group(groups, start_index, date, group_month_count, last_sche
         current_count = group_month_count.get(month_key, 0)
 
         if current_count >= 4:
-            continue
+            continue  # 本月已满
 
         if group_index in last_schedule_date:
             last_date = last_schedule_date[group_index]
@@ -284,32 +232,32 @@ def find_available_group(groups, start_index, date, group_month_count, last_sche
 
 
 def export_to_excel(schedule, groups, year, start_month, end_month, filename="排班表.xlsx"):
-    """
-    把排班结果写成 Excel 文件。
-
-    传入：schedule=排班表, groups=组信息, 年份月份, 文件名
-    """
-    title = f"{year}年{start_month}月-{end_month}月值班排班表"
-    header_rows = [[title, "", "", "", ""]]
+    """把排班结果写成 Excel 文件"""
+    title = f"{year}年{start_month}月-{end_month}月值班排班表"  # 标题
+    header_rows = [[title, "", "", "", ""]]  # 第一行：标题，后面 4 空
     for i, group in enumerate(groups):
         header_rows.append([f"第{i+1}组：{'、'.join(group)}", "", "", "", ""])
-    header_rows.append(["", "", "", "", ""])
-    header_rows.append(["日期", "星期", "类型", "值班组", "值班人员"])
+    header_rows.append(["", "", "", "", ""])  # 空行
+    header_rows.append(["日期", "星期", "类型", "值班组", "值班人员"])  # 表头
 
-    df_data = pd.DataFrame(schedule)  # DataFrame = 表格
-    df_data["日期"] = df_data["日期"].apply(lambda x: x.strftime("%Y-%m-%d"))  # 日期转成 "2024-01-06" 这种
-    df_data = df_data[["日期", "星期", "类型", "值班组", "值班人员"]]
+    df_data = pd.DataFrame(schedule)  # 排班数据转成 DataFrame（表格）
+    df_data["日期"] = df_data["日期"].apply(lambda x: x.strftime("%Y-%m-%d"))
+    # apply 对每行执行；lambda x: ... 匿名函数；strftime 格式化为 "2024-01-06"
+    df_data = df_data[["日期", "星期", "类型", "值班组", "值班人员"]]  # 选这 5 列
 
-    df_header = pd.DataFrame(header_rows)  # 表头
-    df_full = pd.concat([df_header, df_data], ignore_index=True)  # 表头+数据接在一起
+    df_header = pd.DataFrame(header_rows)  # 表头转成表格
+    df_full = pd.concat([df_header, df_data], ignore_index=True)
+    # concat 拼接；ignore_index=True 重新编号行号
 
     with pd.ExcelWriter(filename, engine="xlsxwriter") as writer:
+        # with 自动关文件；engine 指定用 xlsxwriter 写 xlsx
         df_full.to_excel(writer, sheet_name=f"{year}年排班表", index=False, header=False)
-        ws = writer.sheets[f"{year}年排班表"]
-        ws.set_column("A:A", 15)
+        # 写入；index=False 不写行号；header=False 不把第一行当表头（已包含在数据里）
+        ws = writer.sheets[f"{year}年排班表"]  # 拿到工作表对象
+        ws.set_column("A:A", 15)  # A 列宽 15
         ws.set_column("B:B", 10)
         ws.set_column("C:C", 15)
         ws.set_column("D:D", 12)
         ws.set_column("E:E", 30)
 
-    print(f"\n排班表已成功导出到：{filename}")
+    print(f"\n排班表已成功导出到：{filename}")  # 打印提示

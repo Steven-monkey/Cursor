@@ -1,14 +1,18 @@
 """
 部门排班系统 - 核心排班逻辑
 
-功能：
-  - 自动识别法定节假日和调休日
-  - 调休日（周末但需要上班）不安排值班
-  - 劳动节、国庆节特殊分段安排
-  - 连休假期固定同一组值班
-  - 避免连续值班，保证休息时间
+【本文件在项目中的位置】
+  - 位于：src/paiban/core.py
+  - 作用：排班的"最底层"逻辑，只做计算和导出，不依赖 cli、gui
+  - 被谁调用：cli.py 和 gui.py 都 import 本文件的 get_all_schedule_dates、create_schedule、export_to_excel
+  - 调用谁：只调用标准库和第三方库（datetime、pandas、chinese_calendar），不 import 本项目的 cli、gui
 
-本文件是排班的核心，不涉及用户界面，只负责计算和导出。
+【核心逻辑流程】
+  1. get_all_schedule_dates：根据年月范围，筛出需要排班的日期（周末+节假日，排除调休日）
+  2. get_holiday_periods：把日期按"连续"分成多段（劳动节、国庆节强制分段）
+  3. get_period_identifier：为每段打标签（如"劳动节前期"），用于连休固定同一组
+  4. create_schedule：按规则分配值班组，生成排班表
+  5. export_to_excel：导出到 xlsx 文件
 """
 
 # ==================== 导入库 ====================
@@ -182,11 +186,12 @@ def create_schedule(groups, schedule_dates, start_group_index=0):
     """
     创建排班表（核心函数）
 
-    流程：
-        1. 识别所有连续假期时段
-        2. 特殊时段（劳动节、国庆、连休）固定一组值班
-        3. 普通周末轮流排班
-        4. 每组每月不超过 4 天，且避免连续值班
+    【逻辑流程】
+        1. get_holiday_periods：把 schedule_dates 按连续日期分成多段
+        2. 遍历每段：get_period_identifier 判断是"劳动节前期"等特殊段还是普通周末
+        3. 特殊段：用 find_available_group_for_period 选一组承担整段，记到 period_assigned
+        4. 普通段：每天用 find_available_group 轮流选组
+        5. 每个日期：更新 group_month_count、last_schedule_date，拼成一行排班记录
 
     参数：
         groups: 如 [['张三','李四'], ['王五','赵六']]，每组的人员列表
@@ -207,12 +212,13 @@ def create_schedule(groups, schedule_dates, start_group_index=0):
     current_group_index = start_group_index  # 当前轮到哪一组
     period_assigned = {}  # 某段假期已分配给哪组，键 时段标识，值 组索引
 
+    # 第一步：把日期按"连续"分时段，如 [[1.6,1.7], [5.1,5.2,5.3,5.4,5.5], ...]
     holiday_periods = get_holiday_periods(schedule_dates)
 
     for period in holiday_periods:
-        period_id = get_period_identifier(period)
+        period_id = get_period_identifier(period)  # "劳动节前期" / "连休_20240404" / None（普通周末）
 
-        # 需要固定组的时段，且还没分配过
+        # 第二步：若是特殊段且未分配，选一组承担整段
         if period_id and period_id not in period_assigned:
             assigned_group = find_available_group_for_period(
                 groups, current_group_index, period,
@@ -220,8 +226,9 @@ def create_schedule(groups, schedule_dates, start_group_index=0):
             )
             period_assigned[period_id] = assigned_group
             # 下一段从下一组开始轮
-            current_group_index = (assigned_group + 1) % len(groups)  # % 取余实现循环
+            current_group_index = (assigned_group + 1) % len(groups)  # 下一段从下一组开始轮
 
+        # 第三步：遍历时段内每一天，确定值班组
         for date, date_type in period:
             if period_id and period_id in period_assigned:
                 assigned_group = period_assigned[period_id]

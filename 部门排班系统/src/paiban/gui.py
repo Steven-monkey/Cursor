@@ -1,15 +1,23 @@
 """
 部门排班系统 - 图形界面
 
-通过 Tkinter 做可视化界面，用户输入组员姓名、选时间范围，一键生成排班表。
-适合不懂命令行的用户，双击就能用。
+【本文件在项目中的位置】
+  - 位于：src/paiban/gui.py
+  - 作用：用 Tkinter 做窗口，用户填组员、选时间，点"生成排班表"后调用 core 完成排班
+  - 被谁调用：只有 run_gui.py，通过 from paiban.gui import main
+  - 调用谁：from .core import ... 调用 core.py 的三个函数
+
+【与 cli 的区别】
+  - cli：用 input() 读、print() 写，一次流程跑完就退出
+  - gui：用窗口、输入框、按钮，用户点按钮才触发 generate_schedule，可多次生成
 """
 
 import datetime
 import os
-import tkinter as tk  # 图形界面库，Python 自带的
-from tkinter import ttk, messagebox, scrolledtext, filedialog  # ttk 更好看的控件，messagebox 弹窗，filedialog 选文件
+import tkinter as tk  # Python 自带的图形界面库
+from tkinter import ttk, messagebox, scrolledtext, filedialog
 
+# 从同包的 core 导入排班相关函数，gui 只负责界面，计算全交给 core
 from .core import get_all_schedule_dates, create_schedule, export_to_excel
 
 
@@ -244,7 +252,17 @@ class ScheduleApp:
         return groups
 
     def generate_schedule(self):
-        """点击"生成排班表"时执行：读取输入 -> 调用 core -> 导出 -> 显示统计"""
+        """
+        点击"生成排班表"时执行
+
+        【逻辑流程】
+            1. get_groups_from_input：从界面输入框读组员
+            2. 读年份、起止月份、是否接续
+            3. get_all_schedule_dates（core）：得到需要排班的日期列表
+            4. create_schedule（core）：生成排班结果
+            5. export_to_excel（core）：写入 Excel
+            6. log 统计信息，弹窗提示完成
+        """
         try:
             self.log("\n-------- 开始生成 --------")
 

@@ -1,14 +1,20 @@
 """
 部门排班系统 - 命令行入口
 
-通过交互式输入（在终端里一步步输入）生成排班表。
-适合会一点命令行的用户，或者想用脚本自动跑的场景。
+【本文件在项目中的位置】
+  - 位于：src/paiban/cli.py
+  - 作用：提供命令行交互（input/print），收集用户输入后调用 core 做排班
+  - 被谁调用：只有 run_cli.py，通过 from paiban.cli import main
+  - 调用谁：from .core import ... 调用同包下的 core.py
+
+【执行流程】
+  run_cli.py 执行 main() → get_user_input() 获取输入 → get_all_schedule_dates → create_schedule → export_to_excel → 打印统计
 """
 
 import pandas as pd  # 用于统计每组值班天数
 
-# from .core 表示从同一包下的 core 模块导入
-# 点号 . 表示"当前包"
+# from .core：点号 . 表示"当前包"，即同目录下的 core.py
+# 这样写的前提是 cli.py 在 paiban 包内，被 run_cli.py 以 from paiban.cli import main 方式加载
 from .core import (
     get_all_schedule_dates,
     create_schedule,

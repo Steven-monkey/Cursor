@@ -2,6 +2,6 @@
 __pycache__/
 *.pyc
 *.pyo
-
+.vscode
 # 生成的排班表
 排班表_*.xlsx
